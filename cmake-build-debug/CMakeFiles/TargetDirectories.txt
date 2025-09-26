@@ -1,0 +1,3 @@
+/Users/haorangan/CLionProjects/minidb/cmake-build-debug/CMakeFiles/minidb.dir
+/Users/haorangan/CLionProjects/minidb/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/haorangan/CLionProjects/minidb/cmake-build-debug/CMakeFiles/rebuild_cache.dir
