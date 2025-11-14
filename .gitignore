@@ -1,0 +1,77 @@
+# --- Build directories ---
+build/
+build-*/
+out/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# --- Compiled binaries/libraries ---
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+
+# --- Debug / profiling ---
+*.gcno
+*.gcda
+*.gcov
+*.prof
+*.profraw
+*.dSYM/
+
+# --- IDE / Editor ---
+# VSCode
+.vscode/
+*.code-workspace
+
+# CLion / JetBrains
+.idea/
+cmake-build-*/
+
+# Visual Studio
+*.sln
+*.vcxproj*
+*.pdb
+*.ipch
+*.user
+*.suo
+*.cachefile
+
+# Xcode
+*.xcworkspace
+*.xcuserstate
+*.xcodeproj
+
+# --- Tools / Package managers ---
+# Conan
+conanbuildinfo.*
+conaninfo.txt
+.conan/
+
+# vcpkg
+vcpkg_installed/
+vcpkg_build/
+packages/
+
+# --- Misc ---
+*.log
+*.tmp
+*.swp
+*.DS_Store
+Thumbs.db
