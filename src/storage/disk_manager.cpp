@@ -36,3 +36,30 @@ void DiskManager::EnsureFileSize(std::streamoff size) {
         db_io_.flush();
     }
 }
+
+void DiskManager::ReadPage(page_id_t page_id, char *page_data) {
+    std::streamoff offset = static_cast<std::streamoff>(page_id) * PAGE_SIZE;
+    db_io_.seekg(0, std::ios::end);
+    auto size = db_io_.tellg();
+    if (offset >= size) {
+        std::memset(page_data, 0, PAGE_SIZE);
+        return;
+    }
+    db_io_.seekg(offset);
+    db_io_.read(page_data, PAGE_SIZE);
+    if (db_io_.gcount() < PAGE_SIZE) {
+        std::memset(page_data + db_io_.gcount(), 0, PAGE_SIZE - db_io_.gcount());
+    }
+}
+
+void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
+    std::streamoff offset = static_cast<std::streamoff>(page_id) * PAGE_SIZE;
+    EnsureFileSize(offset + PAGE_SIZE);
+    db_io_.seekp(offset);
+    db_io_.write(page_data, PAGE_SIZE);
+    db_io_.flush();
+}
+
+page_id_t DiskManager::AllocatePage() {
+    return next_page_id_++;
+}
