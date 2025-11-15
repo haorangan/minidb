@@ -47,6 +47,14 @@ static TokenType KeywordType(const std::string &upper) {
     if (upper == "INSERT")  return TokenType::INSERT;
     if (upper == "INTO")    return TokenType::INTO;
     if (upper == "VALUES")  return TokenType::VALUES;
+    if (upper == "CREATE")  return TokenType::CREATE;
+    if (upper == "TABLE")   return TokenType::TABLE;
+    if (upper == "INT")     return TokenType::INT_TYPE;
+    if (upper == "ORDER")   return TokenType::ORDER;
+    if (upper == "BY")      return TokenType::BY;
+    if (upper == "LIMIT")   return TokenType::LIMIT;
+    if (upper == "ASC")     return TokenType::ASC;
+    if (upper == "DESC")    return TokenType::DESC;
     return TokenType::IDENT;
 }
 

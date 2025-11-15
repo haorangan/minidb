@@ -12,6 +12,7 @@
 #include "execution/filter_executor.hpp"
 #include "execution/index_scan_executor.hpp"
 #include "execution/insert_executor.hpp"
+#include "execution/create_table_executor.hpp"
 
 #include "sql/lexer.hpp"
 #include "sql/parser.hpp"
@@ -26,7 +27,6 @@
 #include <string>
 #include <vector>
 
-// Helper to trim whitespace
 static void Trim(std::string &s) {
     size_t start = s.find_first_not_of(" \t\n\r");
     size_t end   = s.find_last_not_of(" \t\n\r");
@@ -37,39 +37,68 @@ static void Trim(std::string &s) {
     s = s.substr(start, end - start + 1);
 }
 
+struct ResultRow {
+    Tuple tuple;
+    RID rid;
+};
+
 int main() {
-    // --- Storage + WAL setup ---
+    // Storage + WAL
     DiskManager dm("data.db");
     LogManager log("wal.log", &dm);
     log.Recover();
 
     BufferPoolManager bpm(10, &dm, &log);
 
-    // --- Build catalog and schema ---
     Catalog catalog;
 
-    // Schema: table t(a INT, b INT)
-    Schema t_schema({
-        Column("a", TypeId::INT),
-        Column("b", TypeId::INT)
-    });
+    std::cout << "=== MiniDB demo: CREATE TABLE + INSERT + SELECT ===\n";
 
-    // Create table 't' via catalog
-    TableHeap *table_t = catalog.CreateTable("t", t_schema, &bpm);
+    // --- 1. CREATE TABLE via SQL ---
+    {
+        std::string sql = "CREATE TABLE t (a INT, b INT);";
+        std::cout << "SQL> " << sql << "\n";
+        try {
+            Lexer lex(sql);
+            Token first = lex.PeekToken();
+            if (first.type != TokenType::CREATE) {
+                std::cerr << "Expected CREATE statement\n";
+                return 1;
+            }
+            Parser parser(std::move(lex));
+            CreateTableStatement cstmt = parser.ParseCreateTable();
 
-    // Create B+tree index on column 'a' for table t, and register in catalog.
+            CreateTableExecutor cexec(&catalog, &bpm, cstmt);
+            if (!cexec.Execute()) {
+                std::cerr << "CREATE TABLE failed\n";
+                return 1;
+            }
+        } catch (const SqlParseError &e) {
+            std::cerr << e.what() << "\n";
+            return 1;
+        } catch (const std::exception &e) {
+            std::cerr << "Error during CREATE TABLE: " << e.what() << "\n";
+            return 1;
+        }
+    }
+
+    // Get table + schema from catalog
+    TableHeap *table_t = catalog.GetTable("t");
+    const Schema *t_schema = catalog.GetSchema("t");
+    if (!table_t || !t_schema) {
+        std::cerr << "Failed to retrieve table t after CREATE TABLE\n";
+        return 1;
+    }
+
+    // --- 2. Build B+tree index on t.a and register it ---
     BPlusTreeIndex index_t_a(&bpm);
     index_t_a.Init();
     catalog.RegisterIndex("t", "a", &index_t_a);
 
-    // Planner (uses catalog + bpm)
+    // Planner
     Planner planner(&bpm, &catalog);
 
-    std::cout << "=== MiniDB demo: INSERT + SELECT with catalog/schema ===\n";
-
-    // --- 1. Use INSERT INTO via SQL parser + InsertExecutor ---
-
-    // Insert 20 rows: (a=i, b=10*i) using SQL INSERT.
+    // --- 3. INSERT INTO t VALUES (..., ...) via SQL ---
     for (int i = 0; i < 20; ++i) {
         std::ostringstream oss;
         oss << "INSERT INTO t VALUES(" << i << ", " << (i * 10) << ");";
@@ -78,7 +107,6 @@ int main() {
 
         try {
             Lexer lex(sql);
-            // Peek first token to know it's INSERT
             Token first = lex.PeekToken();
             if (first.type != TokenType::INSERT) {
                 std::cerr << "Expected INSERT statement\n";
@@ -98,14 +126,18 @@ int main() {
         }
     }
 
-    // --- 2. Run some SELECT queries via SQL parser + planner + executors ---
-
+    // --- 4. Run SELECT queries as before ---
     std::vector<std::string> queries = {
         "SELECT * FROM t;",
         "SELECT a, b FROM t WHERE a = 7;",
         "SELECT a FROM t WHERE a BETWEEN 5 AND 12;",
         "SELECT * FROM t WHERE a >= 5 AND a <= 12;",
-        "SELECT * FROM t WHERE a > 10 OR b < 50;"
+        "SELECT * FROM t WHERE a > 10 OR b < 50;",
+
+        // NEW:
+        "SELECT * FROM t ORDER BY b DESC LIMIT 5;",
+        "SELECT a FROM t ORDER BY a ASC LIMIT 3;",
+        "SELECT * FROM t WHERE a >= 5 ORDER BY a DESC;",
     };
 
     for (const auto &sql_raw : queries) {
@@ -117,7 +149,6 @@ int main() {
 
         try {
             Lexer lex(sql);
-            // determine if it's SELECT (we only handle SELECT here)
             Token first = lex.PeekToken();
             if (first.type != TokenType::SELECT) {
                 std::cerr << "Only SELECT supported in this query batch\n";
@@ -127,10 +158,11 @@ int main() {
             Parser parser(std::move(lex));
             SelectStatement stmt = parser.ParseSelect();
 
-            // Plan
             PlanResult plan = planner.PlanSelect(stmt);
             Tuple t;
             RID rid;
+
+            std::vector<ResultRow> rows;
 
             auto print_tuple = [&](const Tuple &tup,
                                    const SelectStatement &s,
@@ -141,7 +173,6 @@ int main() {
                 }
 
                 if (s.select_list.empty()) {
-                    // SELECT *
                     tup.PrintAll();
                 } else {
                     std::cout << "(";
@@ -159,22 +190,54 @@ int main() {
                 }
             };
 
-            // Execute
             if (plan.use_index && plan.index_scan) {
                 while (plan.index_scan->Next(t, rid)) {
-                    print_tuple(t, stmt, plan.schema);
-                    std::cout << "\n";
+                    rows.push_back(ResultRow{t, rid});
                 }
             } else if (plan.filter) {
                 while (plan.filter->Next(t, rid)) {
-                    print_tuple(t, stmt, plan.schema);
-                    std::cout << "\n";
+                    rows.push_back(ResultRow{t, rid});
                 }
             } else if (plan.seq_scan) {
                 while (plan.seq_scan->Next(t, rid)) {
-                    print_tuple(t, stmt, plan.schema);
-                    std::cout << "\n";
+                    rows.push_back(ResultRow{t, rid});
                 }
+            }
+
+            // Apply ORDER BY (if any)
+            const Schema *schema = plan.schema;
+            if (!stmt.order_by.empty() && schema != nullptr) {
+                // For now, only honor the first ORDER BY item
+                const OrderByItem &item = stmt.order_by[0];
+                int col_idx = schema->GetColumnIndex(item.column_name);
+                if (col_idx != -1) {
+                    bool asc = item.ascending;
+                    std::sort(rows.begin(), rows.end(),
+                              [col_idx, asc](const ResultRow &lhs, const ResultRow &rhs) {
+                                  int32_t lv = lhs.tuple.GetInt(static_cast<size_t>(col_idx));
+                                  int32_t rv = rhs.tuple.GetInt(static_cast<size_t>(col_idx));
+                                  if (asc) {
+                                      return lv < rv;
+                                  } else {
+                                      return lv > rv;
+                                  }
+                              });
+                } else {
+                    std::cerr << "Warning: ORDER BY column " << item.column_name
+                              << " not found in schema; ignoring ORDER BY\n";
+                }
+            }
+
+            // Apply LIMIT
+            int64_t limit = stmt.limit;
+            int64_t to_print = (limit < 0)
+                               ? static_cast<int64_t>(rows.size())
+                               : std::min<int64_t>(limit, static_cast<int64_t>(rows.size()));
+
+            for (int64_t i = 0; i < to_print; ++i) {
+                const Tuple &tup = rows[i].tuple;
+                print_tuple(tup, stmt, schema);
+                std::cout << "\n";
             }
 
         } catch (const SqlParseError &e) {
@@ -182,6 +245,8 @@ int main() {
         } catch (const std::exception &e) {
             std::cerr << "Error during SELECT: " << e.what() << "\n";
         }
+
+
     }
 
     std::cout << "\n=== Done ===\n";

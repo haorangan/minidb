@@ -68,6 +68,49 @@ SelectStatement Parser::ParseSelectInternal() {
         stmt.where = ParseExpr();
     }
 
+    // Optional ORDER BY
+    if (Match(TokenType::ORDER)) {
+        Expect(TokenType::BY, "Expected BY after ORDER");
+
+        // For now, support one or more ORDER BY columns in syntax,
+        // but we'll really only use the first in execution.
+        while (true) {
+            if (current_.type != TokenType::IDENT) {
+                throw SqlParseError("Expected column name in ORDER BY");
+            }
+            OrderByItem item;
+            item.column_name = current_.lexeme;
+            item.ascending = true; // default ASC
+            Advance();
+
+            // Optional ASC/DESC
+            if (current_.type == TokenType::ASC) {
+                item.ascending = true;
+                Advance();
+            } else if (current_.type == TokenType::DESC) {
+                item.ascending = false;
+                Advance();
+            }
+
+            stmt.order_by.push_back(std::move(item));
+
+            if (current_.type == TokenType::COMMA) {
+                Advance();
+                continue;
+            }
+            break;
+        }
+    }
+
+    // Optional LIMIT
+    if (Match(TokenType::LIMIT)) {
+        if (current_.type != TokenType::NUMBER) {
+            throw SqlParseError("Expected number after LIMIT");
+        }
+        stmt.limit = current_.number_value;
+        Advance();
+    }
+
     // Optional semicolon
     if (current_.type == TokenType::SEMICOLON) {
         Advance();
@@ -277,6 +320,86 @@ InsertStatement Parser::ParseInsert() {
         current_.type != TokenType::SEMICOLON) {
         throw SqlParseError("Unexpected trailing tokens after INSERT statement");
         }
+
+    return stmt;
+}
+
+CreateTableStatement Parser::ParseCreateTable() {
+    CreateTableStatement stmt;
+
+    // Expect CREATE
+    if (current_.type != TokenType::CREATE) {
+        throw SqlParseError("Expected CREATE at beginning of CREATE TABLE statement");
+    }
+    Advance(); // consume CREATE
+
+    // TABLE
+    Expect(TokenType::TABLE, "Expected TABLE after CREATE");
+
+    // table name
+    if (current_.type != TokenType::IDENT) {
+        throw SqlParseError("Expected table name after CREATE TABLE");
+    }
+    stmt.table_name = current_.lexeme;
+    Advance();
+
+    // (
+    Expect(TokenType::LPAREN, "Expected '(' after table name in CREATE TABLE");
+
+    // column defs: name type, ...
+    if (current_.type != TokenType::IDENT) {
+        throw SqlParseError("Expected column name in CREATE TABLE column list");
+    }
+
+    while (true) {
+        if (current_.type != TokenType::IDENT) {
+            throw SqlParseError("Expected column name in CREATE TABLE");
+        }
+        ColumnDef col_def;
+        col_def.name = current_.lexeme;
+        Advance();
+
+        // type (for now only INT)
+        if (current_.type == TokenType::INT_TYPE) {
+            col_def.type_name = "INT";
+            Advance();
+        } else if (current_.type == TokenType::IDENT) {
+            // allow IDENT that happens to be "INT"
+            std::string upper = current_.lexeme;
+            for (char &c : upper) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            if (upper == "INT") {
+                col_def.type_name = "INT";
+                Advance();
+            } else {
+                throw SqlParseError("Unsupported column type: " + current_.lexeme);
+            }
+        } else {
+            throw SqlParseError("Expected type name after column in CREATE TABLE");
+        }
+
+        stmt.columns.push_back(std::move(col_def));
+
+        if (current_.type == TokenType::COMMA) {
+            Advance();
+            continue;
+        }
+        break;
+    }
+
+    // )
+    Expect(TokenType::RPAREN, "Expected ')' at end of column list");
+
+    // Optional semicolon
+    if (current_.type == TokenType::SEMICOLON) {
+        Advance();
+    }
+
+    if (current_.type != TokenType::END_OF_FILE &&
+        current_.type != TokenType::SEMICOLON) {
+        throw SqlParseError("Unexpected trailing tokens after CREATE TABLE");
+    }
 
     return stmt;
 }

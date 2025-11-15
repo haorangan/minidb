@@ -38,6 +38,15 @@ enum class TokenType {
     INSERT,
     INTO,
     VALUES,
+    CREATE,
+    TABLE,
+    INT_TYPE,
+
+    ORDER,
+    BY,
+    LIMIT,
+    ASC,
+    DESC,
 
     END_OF_FILE,
     UNKNOWN

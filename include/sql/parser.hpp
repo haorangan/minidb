@@ -20,6 +20,7 @@ public:
 
     SelectStatement ParseSelect();
     InsertStatement ParseInsert();
+    CreateTableStatement ParseCreateTable();
 
 private:
     Lexer lexer_;

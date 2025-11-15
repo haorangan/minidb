@@ -59,13 +59,33 @@ struct ColumnRef {
     std::string name;
 };
 
+struct OrderByItem {
+    std::string column_name;
+    bool ascending;
+};
+
 struct SelectStatement {
     std::vector<ColumnRef> select_list; // empty = *
     std::string table_name;
     ExprPtr where; // may be nullptr
+
+    std::vector<OrderByItem> order_by; // optional ORDER BY
+    int64_t limit = -1;                // -1 = no LIMIT
 };
 
 struct InsertStatement {
     std::string table_name;
     std::vector<int64_t> values; // for now, all INT literals
 };
+
+struct ColumnDef {
+    std::string name;
+    std::string type_name;  // e.g. "INT"
+};
+
+struct CreateTableStatement {
+    std::string table_name;
+    std::vector<ColumnDef> columns;
+};
+
+
