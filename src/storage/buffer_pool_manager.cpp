@@ -6,8 +6,8 @@
 
 #include <cassert>
 
-BufferPoolManager::BufferPoolManager(size_t pool_size, DiskManager *disk)
-    : pool_size_(pool_size), disk_(disk), pages_(pool_size) {
+BufferPoolManager::BufferPoolManager(size_t pool_size, DiskManager *disk, LogManager *log)
+    : pool_size_(pool_size), disk_(disk), log_(log), pages_(pool_size) {
     for (size_t i = 0; i < pool_size_; ++i) {
         lru_list_.push_back(i);
         lru_pos_[i] = std::prev(lru_list_.end());
@@ -61,7 +61,11 @@ Page *BufferPoolManager::FetchPage(page_id_t page_id) {
 
     if (victim.GetPageId() != -1) {
         if (victim.IsDirty()) {
+            if (log_ != nullptr) {
+                log_->AppendPageWrite(victim.GetPageId(), victim.GetData());
+            }
             disk_->WritePage(victim.GetPageId(), victim.GetData());
+            victim.SetDirty(false);
         }
         page_table_.erase(victim.GetPageId());
     }
@@ -83,7 +87,11 @@ Page *BufferPoolManager::NewPage(page_id_t &page_id) {
 
     if (victim.GetPageId() != -1) {
         if (victim.IsDirty()) {
+            if (log_ != nullptr) {
+                log_->AppendPageWrite(victim.GetPageId(), victim.GetData());
+            }
             disk_->WritePage(victim.GetPageId(), victim.GetData());
+            victim.SetDirty(false);
         }
         page_table_.erase(victim.GetPageId());
     }
@@ -128,7 +136,17 @@ bool BufferPoolManager::FlushPage(page_id_t page_id) {
     auto it = page_table_.find(page_id);
     if (it == page_table_.end()) return false;
     Page &page = pages_[it->second];
+
+    if (log_ != nullptr) {
+        log_->AppendPageWrite(page_id, page.GetData());
+    }
     disk_->WritePage(page_id, page.GetData());
     page.SetDirty(false);
     return true;
+}
+
+void BufferPoolManager::FlushAllPages() {
+    for (const auto &entry : page_table_) {
+        FlushPage(entry.first);
+    }
 }

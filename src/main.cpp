@@ -13,7 +13,15 @@
 
 int main() {
     DiskManager dm("data.db");
-    BufferPoolManager bpm(10, &dm);
+
+    // WAL manager, bound to this disk + wal.log
+    LogManager log("wal.log", &dm);
+
+    // Crash recovery: replay any logged page writes
+    log.Recover();
+
+    // Now create buffer pool, wired to both disk and log
+    BufferPoolManager bpm(10, &dm, &log);
 
     // Create a new table
     TableHeap *table = TableHeap::Create(&bpm);
