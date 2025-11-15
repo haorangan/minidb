@@ -13,17 +13,17 @@ public:
     Page() { ResetMemory(); }
 
     char *GetData() { return data_; }
-    const char *GetData() const { return data_; }
+    [[nodiscard]] const char *GetData() const { return data_; }
 
-    page_id_t GetPageId() const { return page_id_; }
+    [[nodiscard]] page_id_t GetPageId() const { return page_id_; }
     void SetPageId(page_id_t pid) { page_id_ = pid; }
 
-    int GetPinCount() const { return pin_count_; }
+    [[nodiscard]] int GetPinCount() const { return pin_count_; }
     void Pin() { pin_count_++; }
     void Unpin() { pin_count_--; }
 
-    bool IsDirty() const { return is_dirty_; }
-    void SetDirty(bool dirty) { is_dirty_ = dirty; }
+    [[nodiscard]] bool IsDirty() const { return is_dirty_; }
+    void SetDirty(const bool dirty) { is_dirty_ = dirty; }
 
     void ResetMemory() { std::memset(data_, 0, PAGE_SIZE); }
 
