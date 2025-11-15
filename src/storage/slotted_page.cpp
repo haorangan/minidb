@@ -59,7 +59,7 @@ bool SlottedPage::HasSpace(uint16_t tuple_size) const {
         return false;
     }
 
-    uint32_t free_space = static_cast<uint32_t>(free_end - dir_end);
+    const auto free_space = static_cast<uint32_t>(free_end - dir_end);
     return free_space >= needed;
 }
 
@@ -68,8 +68,8 @@ bool SlottedPage::InsertTuple(const char *data, uint16_t size, RID &rid) {
         return false;
     }
 
-    uint16_t dir_end = FreeSpaceOffset();
-    uint16_t free_end = FreeSpaceEnd();
+    const uint16_t dir_end = FreeSpaceOffset();
+    const uint16_t free_end = FreeSpaceEnd();
 
     // Place tuple bytes at the end of free space: grow data downward
     const auto tuple_offset = static_cast<uint16_t>(free_end - size);
