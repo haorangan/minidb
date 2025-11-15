@@ -19,6 +19,7 @@ public:
     explicit Parser(Lexer lexer);
 
     SelectStatement ParseSelect();
+    InsertStatement ParseInsert();
 
 private:
     Lexer lexer_;

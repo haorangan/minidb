@@ -64,3 +64,8 @@ struct SelectStatement {
     std::string table_name;
     ExprPtr where; // may be nullptr
 };
+
+struct InsertStatement {
+    std::string table_name;
+    std::vector<int64_t> values; // for now, all INT literals
+};

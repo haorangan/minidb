@@ -44,6 +44,9 @@ static TokenType KeywordType(const std::string &upper) {
     if (upper == "NOT")     return TokenType::NOT;
     if (upper == "BETWEEN") return TokenType::BETWEEN;
     if (upper == "AS")      return TokenType::AS;
+    if (upper == "INSERT")  return TokenType::INSERT;
+    if (upper == "INTO")    return TokenType::INTO;
+    if (upper == "VALUES")  return TokenType::VALUES;
     return TokenType::IDENT;
 }
 

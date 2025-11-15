@@ -59,7 +59,6 @@ bool IndexScanExecutor::Next(Tuple &out, RID &rid) {
     RID r = matches_[match_idx_++];
     rid = r;
 
-    // Fetch tuple from table via RID
     Page *page = bpm_->FetchPage(r.page_id);
     if (!page) {
         return false;
@@ -72,11 +71,12 @@ bool IndexScanExecutor::Next(Tuple &out, RID &rid) {
     bool ok = sp.GetTuple(r, buf, sz);
     bpm_->UnpinPage(r.page_id, /*is_dirty=*/false);
 
-    if (!ok || sz != sizeof(int32_t) * 2) {
+    if (!ok || sz % sizeof(int32_t) != 0) {
         return false;
     }
 
+    size_t count = sz / sizeof(int32_t);
     auto *vals = reinterpret_cast<int32_t *>(buf);
-    out = Tuple(vals[0], vals[1]);
+    out = Tuple::FromRawInts(vals, count);
     return true;
 }

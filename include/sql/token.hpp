@@ -35,6 +35,9 @@ enum class TokenType {
     NOT,
     BETWEEN,
     AS,
+    INSERT,
+    INTO,
+    VALUES,
 
     END_OF_FILE,
     UNKNOWN

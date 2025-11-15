@@ -225,3 +225,58 @@ ExprPtr Parser::ParseComparison() {
 
     return std::make_unique<CompareExpr>(std::move(left_expr), op, std::move(right_expr));
 }
+
+InsertStatement Parser::ParseInsert() {
+    InsertStatement stmt;
+
+    // We assume current_ is first token;
+    // if caller didn't advance, we expect INSERT here.
+    if (current_.type != TokenType::INSERT) {
+        throw SqlParseError("Expected INSERT at beginning of INSERT statement");
+    }
+    Advance(); // consume INSERT
+
+    Expect(TokenType::INTO, "Expected INTO after INSERT");
+
+    if (current_.type != TokenType::IDENT) {
+        throw SqlParseError("Expected table name after INSERT INTO");
+    }
+    stmt.table_name = current_.lexeme;
+    Advance(); // table name
+
+    Expect(TokenType::VALUES, "Expected VALUES after INSERT INTO <table>");
+
+    Expect(TokenType::LPAREN, "Expected '(' after VALUES");
+
+    // Parse comma-separated list of numeric literals
+    if (current_.type != TokenType::NUMBER) {
+        throw SqlParseError("Expected at least one numeric literal in VALUES");
+    }
+    while (true) {
+        if (current_.type != TokenType::NUMBER) {
+            throw SqlParseError("Expected numeric literal in VALUES");
+        }
+        stmt.values.push_back(current_.number_value);
+        Advance();
+
+        if (current_.type == TokenType::COMMA) {
+            Advance();
+            continue;
+        }
+        break;
+    }
+
+    Expect(TokenType::RPAREN, "Expected ')' after VALUES list");
+
+    // Optional semicolon
+    if (current_.type == TokenType::SEMICOLON) {
+        Advance();
+    }
+
+    if (current_.type != TokenType::END_OF_FILE &&
+        current_.type != TokenType::SEMICOLON) {
+        throw SqlParseError("Unexpected trailing tokens after INSERT statement");
+        }
+
+    return stmt;
+}

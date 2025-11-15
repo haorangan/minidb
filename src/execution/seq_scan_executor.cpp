@@ -34,17 +34,19 @@ bool SeqScanExecutor::Next(Tuple &out, RID &rid) {
                 continue;  // deleted/invalid slot
             }
 
-            // For now, expect exactly two int32_t values
-            if (sz == sizeof(int32_t) * 2) {
-                auto *vals = reinterpret_cast<int32_t *>(buf);
-                out = Tuple(vals[0], vals[1]);
-                rid = r;
-                bpm_->UnpinPage(pid, /*dirty=*/false);
-                return true;
+            // New: interpret as N int32_t values
+            if (sz % sizeof(int32_t) != 0) {
+                continue; // skip malformed
             }
+            size_t count = sz / sizeof(int32_t);
+            auto *vals = reinterpret_cast<int32_t *>(buf);
+
+            out = Tuple::FromRawInts(vals, count);
+            rid = r;
+            bpm_->UnpinPage(pid, /*dirty=*/false);
+            return true;
         }
 
-        // Done with this page, move to next
         bpm_->UnpinPage(pid, /*dirty=*/false);
         ++page_idx_;
         slot_idx_ = 0;
