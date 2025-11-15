@@ -2,7 +2,7 @@
 // Created by Haoran Gan on 11/14/25.
 //
 
-#include "../include/storage/buffer_pool_manager.hpp"
+#include "storage/buffer_pool_manager.hpp"
 
 #include <cassert>
 

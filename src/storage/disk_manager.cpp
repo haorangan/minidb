@@ -3,7 +3,7 @@
 //
 
 
-#include "../include/storage/disk_manager.hpp"
+#include "storage/disk_manager.hpp"
 
 DiskManager::DiskManager(std::string filename) : filename_(std::move(filename)) {
     db_io_.open(filename_, std::ios::in | std::ios::out | std::ios::binary);
