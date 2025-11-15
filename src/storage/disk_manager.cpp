@@ -2,7 +2,6 @@
 // Created by Haoran Gan on 11/14/25.
 //
 
-#include <utility>
 
 #include "../include/storage/disk_manager.hpp"
 
@@ -24,4 +23,16 @@ DiskManager::DiskManager(std::string filename) : filename_(std::move(filename)) 
 DiskManager::~DiskManager() {
     db_io_.flush();
     db_io_.close();
+}
+
+void DiskManager::EnsureFileSize(std::streamoff size) {
+    db_io_.seekp(0, std::ios::end);
+    if (auto cur = db_io_.tellp(); cur < size) {
+        const std::string zeros(PAGE_SIZE, '\0');
+        while (cur < size) {
+            db_io_.write(zeros.data(), PAGE_SIZE);
+            cur += PAGE_SIZE;
+        }
+        db_io_.flush();
+    }
 }
