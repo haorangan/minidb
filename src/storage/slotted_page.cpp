@@ -3,7 +3,7 @@
 //
 #include "storage/slotted_page.hpp"
 
-#include <cstring>
+#include <cstring>  // std::memcpy, std::memset
 #include <stdexcept>
 
 // ---- Header field helpers ----
@@ -15,13 +15,13 @@ uint16_t &SlottedPage::NumSlots() const {
 }
 
 // free_space_end is stored at offset 2..3
-uint16_t &SlottedPage::FreeSpaceEnd() const {
+uint16_t &SlottedPage::FreeSpaceEndRef() const {
     auto *data = const_cast<char *>(page_->GetData());
     return *reinterpret_cast<uint16_t *>(data + 2);
 }
 
 // Slot directory occupies [HEADER_SIZE .. HEADER_SIZE + NumSlots()*sizeof(Slot))
-uint16_t SlottedPage::FreeSpaceOffset() const {
+uint16_t SlottedPage::FreeSpaceOffsetInternal() const {
     return static_cast<uint16_t>(HEADER_SIZE + NumSlots() * SLOT_SIZE);
 }
 
@@ -43,13 +43,13 @@ void SlottedPage::Init() {
 
     // Initialize header
     NumSlots() = 0;
-    FreeSpaceEnd() = PAGE_SIZE;  // tuple data starts at the very end (no tuples yet)
+    FreeSpaceEndRef() = PAGE_SIZE;  // tuple data starts at the very end (no tuples yet)
 }
 
 // Free space is the gap between end of slot directory and FreeSpaceEnd
 bool SlottedPage::HasSpace(uint16_t tuple_size) const {
-    uint16_t dir_end = FreeSpaceOffset();
-    uint16_t free_end = FreeSpaceEnd();
+    uint16_t dir_end = FreeSpaceOffsetInternal();
+    uint16_t free_end = FreeSpaceEndRef();
 
     // Need room for both the new slot metadata and the tuple bytes
     uint32_t needed = static_cast<uint32_t>(SLOT_SIZE) + tuple_size;
@@ -59,7 +59,7 @@ bool SlottedPage::HasSpace(uint16_t tuple_size) const {
         return false;
     }
 
-    const auto free_space = static_cast<uint32_t>(free_end - dir_end);
+    auto free_space = static_cast<uint32_t>(free_end - dir_end);
     return free_space >= needed;
 }
 
@@ -68,11 +68,11 @@ bool SlottedPage::InsertTuple(const char *data, uint16_t size, RID &rid) {
         return false;
     }
 
-    const uint16_t dir_end = FreeSpaceOffset();
-    const uint16_t free_end = FreeSpaceEnd();
+    uint16_t dir_end = FreeSpaceOffsetInternal();
+    uint16_t free_end = FreeSpaceEndRef();
 
     // Place tuple bytes at the end of free space: grow data downward
-    const auto tuple_offset = static_cast<uint16_t>(free_end - size);
+    auto tuple_offset = static_cast<uint16_t>(free_end - size);
 
     // Copy tuple bytes into the page
     char *page_data = page_->GetData();
@@ -89,7 +89,7 @@ bool SlottedPage::InsertTuple(const char *data, uint16_t size, RID &rid) {
 
     // Update header
     NumSlots() = static_cast<uint16_t>(NumSlots() + 1);
-    FreeSpaceEnd() = tuple_offset;
+    FreeSpaceEndRef() = tuple_offset;
 
     // Return record ID
     rid.page_id = page_->GetPageId();
@@ -99,7 +99,6 @@ bool SlottedPage::InsertTuple(const char *data, uint16_t size, RID &rid) {
 }
 
 bool SlottedPage::GetTuple(const RID &rid, char *dest, uint16_t &size) const {
-    // Optionally: check the page_id matches; here we assume caller checked
     if (!rid.IsValid()) {
         return false;
     }
@@ -129,4 +128,18 @@ bool SlottedPage::GetTuple(const RID &rid, char *dest, uint16_t &size) const {
     std::memcpy(dest, page_data + tuple_offset, tuple_size);
     size = tuple_size;
     return true;
+}
+
+// ---- Debug / inspection helpers ----
+
+uint16_t SlottedPage::GetNumSlots() const {
+    return NumSlots();
+}
+
+uint16_t SlottedPage::GetFreeSpaceOffset() const {
+    return FreeSpaceOffsetInternal();
+}
+
+uint16_t SlottedPage::GetFreeSpaceEnd() const {
+    return FreeSpaceEndRef();
 }

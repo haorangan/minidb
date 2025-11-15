@@ -16,13 +16,18 @@ public:
     void Init();
 
     // Check if there is enough space to insert a tuple of given size (in bytes)
-    bool HasSpace(uint16_t tuple_size) const;
+    [[nodiscard]] bool HasSpace(uint16_t tuple_size) const;
 
     // Insert a tuple's raw bytes; returns false if not enough space
     bool InsertTuple(const char *data, uint16_t size, RID &rid);
 
     // Read a tuple at RID into dest; sets size; returns false if not present/deleted
     bool GetTuple(const RID &rid, char *dest, uint16_t &size) const;
+
+    // ---- Debug / inspection helpers ----
+    [[nodiscard]] uint16_t GetNumSlots() const;
+    [[nodiscard]] uint16_t GetFreeSpaceOffset() const;  // where slot directory ends
+    [[nodiscard]] uint16_t GetFreeSpaceEnd() const;     // where tuple data begins (from bottom)
 
 private:
     Page *page_;
@@ -50,10 +55,10 @@ private:
 
     // Header accessors (stored in the first 4 bytes of the page)
     [[nodiscard]] uint16_t &NumSlots() const;
-    [[nodiscard]] uint16_t &FreeSpaceEnd() const;
+    [[nodiscard]] uint16_t &FreeSpaceEndRef() const;
 
     // Compute where the slot directory currently ends
-    [[nodiscard]] uint16_t FreeSpaceOffset() const;
+    [[nodiscard]] uint16_t FreeSpaceOffsetInternal() const;
 
     // Get pointer to a particular slot
     [[nodiscard]] Slot *GetSlot(uint16_t slot_id) const;

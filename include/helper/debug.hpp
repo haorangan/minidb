@@ -2,7 +2,8 @@
 // Created by Haoran Gan on 11/14/25.
 //
 
-#ifndef DEBUG_HPP
-#define DEBUG_HPP
+#pragma once
+#include "storage/buffer_pool_manager.hpp"
 
-#endif //DEBUG_HPP
+
+void DumpPage(BufferPoolManager *bpm, page_id_t pid);
