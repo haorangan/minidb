@@ -5,59 +5,67 @@
 
 #include "storage/disk_manager.hpp"
 
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <stdexcept>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static std::runtime_error IoError(const std::string &what, const std::string &file) {
+    return std::runtime_error(what + " " + file + ": " + std::strerror(errno));
+}
+
 DiskManager::DiskManager(std::string filename) : filename_(std::move(filename)) {
-    db_io_.open(filename_, std::ios::in | std::ios::out | std::ios::binary);
-    if (!db_io_.is_open()) {
-        db_io_.clear();
-        db_io_.open(filename_, std::ios::out | std::ios::binary);
-        db_io_.close();
-        db_io_.open(filename_, std::ios::in | std::ios::out | std::ios::binary);
+    fd_ = ::open(filename_.c_str(), O_RDWR | O_CREAT, 0644);
+    if (fd_ < 0) {
+        throw IoError("DiskManager: cannot open", filename_);
     }
 
-    db_io_.seekg(0, std::ios::end);
-    if (const auto size = db_io_.tellg(); size > 0) {
-        next_page_id_ = static_cast<page_id_t>(size / PAGE_SIZE);
+    struct stat st{};
+    if (::fstat(fd_, &st) != 0) {
+        throw IoError("DiskManager: cannot stat", filename_);
     }
+    // Round up so a partially written last page is never handed out again
+    next_page_id_ = static_cast<page_id_t>((st.st_size + PAGE_SIZE - 1) / PAGE_SIZE);
 }
 
 DiskManager::~DiskManager() {
-    db_io_.flush();
-    db_io_.close();
-}
-
-void DiskManager::EnsureFileSize(std::streamoff size) {
-    db_io_.seekp(0, std::ios::end);
-    if (auto cur = db_io_.tellp(); cur < size) {
-        const std::string zeros(PAGE_SIZE, '\0');
-        while (cur < size) {
-            db_io_.write(zeros.data(), PAGE_SIZE);
-            cur += PAGE_SIZE;
-        }
-        db_io_.flush();
+    if (fd_ >= 0) {
+        ::close(fd_);
     }
 }
 
 void DiskManager::ReadPage(page_id_t page_id, char *page_data) {
-    std::streamoff offset = static_cast<std::streamoff>(page_id) * PAGE_SIZE;
-    db_io_.seekg(0, std::ios::end);
-    auto size = db_io_.tellg();
-    if (offset >= size) {
-        std::memset(page_data, 0, PAGE_SIZE);
-        return;
+    off_t offset = static_cast<off_t>(page_id) * PAGE_SIZE;
+    size_t done = 0;
+    while (done < PAGE_SIZE) {
+        ssize_t n = ::pread(fd_, page_data + done, PAGE_SIZE - done, offset + static_cast<off_t>(done));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            throw IoError("DiskManager: read failed on", filename_);
+        }
+        if (n == 0) break;  // end of file
+        done += static_cast<size_t>(n);
     }
-    db_io_.seekg(offset);
-    db_io_.read(page_data, PAGE_SIZE);
-    if (db_io_.gcount() < PAGE_SIZE) {
-        std::memset(page_data + db_io_.gcount(), 0, PAGE_SIZE - db_io_.gcount());
+    // Unwritten pages (past EOF) read as zeros
+    if (done < PAGE_SIZE) {
+        std::memset(page_data + done, 0, PAGE_SIZE - done);
     }
 }
 
 void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
-    std::streamoff offset = static_cast<std::streamoff>(page_id) * PAGE_SIZE;
-    EnsureFileSize(offset + PAGE_SIZE);
-    db_io_.seekp(offset);
-    db_io_.write(page_data, PAGE_SIZE);
-    db_io_.flush();
+    // Writing past EOF extends the file; any gap reads back as zeros
+    off_t offset = static_cast<off_t>(page_id) * PAGE_SIZE;
+    size_t done = 0;
+    while (done < PAGE_SIZE) {
+        ssize_t n = ::pwrite(fd_, page_data + done, PAGE_SIZE - done, offset + static_cast<off_t>(done));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            throw IoError("DiskManager: write failed on", filename_);
+        }
+        done += static_cast<size_t>(n);
+    }
 }
 
 page_id_t DiskManager::AllocatePage() {
