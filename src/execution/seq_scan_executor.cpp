@@ -12,7 +12,7 @@ SeqScanExecutor::SeqScanExecutor(BufferPoolManager *bpm, TableHeap *table)
       slot_idx_(0) {}
 
 bool SeqScanExecutor::Next(Tuple &out, RID &rid) {
-    char buf[256];
+    char buf[PAGE_SIZE];  // a tuple can never be larger than a page
     uint16_t sz = 0;
 
     while (page_idx_ < pages_.size()) {

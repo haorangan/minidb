@@ -182,10 +182,13 @@ PlanResult Planner::PlanSelect(const SelectStatement &stmt) {
     res.table = table;
     res.schema = schema;
 
-    // For now, we only consider index on column "a"
-    BPlusTreeIndex *index = catalog_->GetIndex(stmt.table_name, "a");
+    // The only index we build is on the first column
+    BPlusTreeIndex *index = nullptr;
+    if (schema->GetColumnCount() > 0) {
+        index = catalog_->GetIndex(stmt.table_name, schema->GetColumn(0).name);
+    }
 
-    // Decide whether to use index on column a
+    // Decide whether to use the index on the first column
     IndexHint hint = AnalyzeForIndex(stmt.where.get(), schema);
 
     if (index != nullptr && (hint.point || hint.range)) {

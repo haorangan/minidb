@@ -65,7 +65,7 @@ bool IndexScanExecutor::Next(Tuple &out, RID &rid) {
     }
 
     SlottedPage sp(page);
-    char buf[64];
+    char buf[PAGE_SIZE];  // a tuple can never be larger than a page
     uint16_t sz = 0;
 
     bool ok = sp.GetTuple(r, buf, sz);
