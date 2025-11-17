@@ -8,9 +8,7 @@
 
 #include "index/bplus_tree_index.hpp"
 
-#include "execution/seq_scan_executor.hpp"
-#include "execution/filter_executor.hpp"
-#include "execution/index_scan_executor.hpp"
+#include "execution/executor.hpp"
 #include "execution/insert_executor.hpp"
 #include "execution/create_table_executor.hpp"
 
@@ -27,12 +25,6 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <algorithm>
-
-struct ResultRow {
-    Tuple tuple;
-    RID rid;
-};
 
 static void Trim(std::string &s) {
     size_t start = s.find_first_not_of(" \t\n\r");
@@ -155,92 +147,30 @@ int main() {
                 continue;
             }
 
+            // ---- EXPLAIN SELECT ... ----
+            if (first.type == TokenType::EXPLAIN) {
+                lex.NextToken();  // consume EXPLAIN
+                Parser parser(std::move(lex));
+                SelectStatement stmt = parser.ParseSelect();
+                PlanResult plan = planner.PlanSelect(stmt);
+                std::cout << Explain(*plan.root);
+                continue;
+            }
+
             // ---- SELECT ----
             if (first.type == TokenType::SELECT) {
                 Parser parser(std::move(lex));
                 SelectStatement stmt = parser.ParseSelect();
 
+                // The plan does all the work (joins, WHERE, GROUP BY, ORDER BY,
+                // projection, LIMIT); we just pull rows from its root.
                 PlanResult plan = planner.PlanSelect(stmt);
                 Tuple t;
                 RID rid;
-
-                auto print_tuple = [&](const Tuple &tup,
-                                       const SelectStatement &s,
-                                       const Schema *schema) {
-                    if (!schema) {
-                        tup.PrintAll();
-                        return;
-                    }
-
-                    if (s.select_list.empty()) {
-                        // SELECT *
-                        tup.PrintAll();
-                    } else {
-                        std::cout << "(";
-                        for (size_t i = 0; i < s.select_list.size(); ++i) {
-                            const auto &col_ref = s.select_list[i];
-                            int idx = schema->GetColumnIndex(col_ref.name);
-                            if (idx == -1) {
-                                std::cout << "NULL";
-                            } else {
-                                std::cout << tup.GetInt(static_cast<size_t>(idx));
-                            }
-                            if (i + 1 < s.select_list.size()) std::cout << ", ";
-                        }
-                        std::cout << ")";
-                    }
-                };
-
-                // gather rows from whichever executor is active
-                std::vector<ResultRow> rows;
-                if (plan.use_index && plan.index_scan) {
-                    while (plan.index_scan->Next(t, rid)) {
-                        rows.push_back(ResultRow{t, rid});
-                    }
-                } else if (plan.filter) {
-                    while (plan.filter->Next(t, rid)) {
-                        rows.push_back(ResultRow{t, rid});
-                    }
-                } else if (plan.seq_scan) {
-                    while (plan.seq_scan->Next(t, rid)) {
-                        rows.push_back(ResultRow{t, rid});
-                    }
-                }
-
-                const Schema *schema = plan.schema;
-
-                // ORDER BY (first item only for now)
-                if (!stmt.order_by.empty() && schema != nullptr) {
-                    const OrderByItem &item = stmt.order_by[0];
-                    int col_idx = schema->GetColumnIndex(item.column_name);
-                    if (col_idx != -1) {
-                        bool asc = item.ascending;
-                        std::sort(rows.begin(), rows.end(),
-                                  [col_idx, asc](const ResultRow &lhs, const ResultRow &rhs) {
-                                      int32_t lv = lhs.tuple.GetInt(static_cast<size_t>(col_idx));
-                                      int32_t rv = rhs.tuple.GetInt(static_cast<size_t>(col_idx));
-                                      if (asc) return lv < rv;
-                                      return lv > rv;
-                                  });
-                    } else {
-                        std::cerr << "Warning: ORDER BY column "
-                                  << item.column_name
-                                  << " not found; ignoring ORDER BY.\n";
-                    }
-                }
-
-                // LIMIT
-                int64_t limit = stmt.limit;
-                int64_t to_print = (limit < 0)
-                    ? static_cast<int64_t>(rows.size())
-                    : std::min<int64_t>(limit, static_cast<int64_t>(rows.size()));
-
-                for (int64_t i = 0; i < to_print; ++i) {
-                    const Tuple &tup = rows[i].tuple;
-                    print_tuple(tup, stmt, schema);
+                while (plan.root->Next(t, rid)) {
+                    t.PrintAll();
                     std::cout << "\n";
                 }
-
                 continue;
             }
 

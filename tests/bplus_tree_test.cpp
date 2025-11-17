@@ -9,6 +9,7 @@
 #include "sql/lexer.hpp"
 #include "sql/parser.hpp"
 #include "sql/planner.hpp"
+#include "test_util.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -19,17 +20,6 @@
 #include <random>
 #include <string>
 #include <vector>
-
-static int g_failures = 0;
-
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            std::cerr << "  CHECK failed: " #cond " (" << __FILE__ << ":"      \
-                      << __LINE__ << ")\n";                                    \
-            ++g_failures;                                                      \
-        }                                                                      \
-    } while (0)
 
 using Reference = std::multimap<int32_t, RID>;
 
@@ -152,11 +142,7 @@ static void TestSqlUsesIndexOnFirstColumn() {
         std::vector<Tuple> rows;
         Tuple t;
         RID rid;
-        if (plan.index_scan) {
-            while (plan.index_scan->Next(t, rid)) rows.push_back(t);
-        } else if (plan.filter) {
-            while (plan.filter->Next(t, rid)) rows.push_back(t);
-        }
+        while (plan.root->Next(t, rid)) rows.push_back(t);
         return rows;
     };
 
@@ -209,10 +195,5 @@ int main() {
 
     TestSqlUsesIndexOnFirstColumn();
 
-    if (g_failures == 0) {
-        std::cout << "All B+ tree tests passed.\n";
-        return 0;
-    }
-    std::cout << g_failures << " check(s) failed.\n";
-    return 1;
+    return TestSummary("B+ tree");
 }

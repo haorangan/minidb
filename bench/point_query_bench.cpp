@@ -45,13 +45,7 @@ static std::vector<Tuple> RunSelect(Planner &planner, const std::string &sql, bo
     std::vector<Tuple> rows;
     Tuple t;
     RID rid;
-    if (plan.index_scan) {
-        while (plan.index_scan->Next(t, rid)) rows.push_back(t);
-    } else if (plan.filter) {
-        while (plan.filter->Next(t, rid)) rows.push_back(t);
-    } else if (plan.seq_scan) {
-        while (plan.seq_scan->Next(t, rid)) rows.push_back(t);
-    }
+    while (plan.root->Next(t, rid)) rows.push_back(t);
     return rows;
 }
 
