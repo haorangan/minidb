@@ -32,6 +32,9 @@ private:
 
     // Parsing helpers
     SelectStatement ParseSelectInternal();
+    SelectItem ParseSelectItem();
+    bool AtAggregateCall();
+    SelectItem ParseAggregateCall();
 
     // WHERE expression:
     // expr := or_expr
@@ -45,6 +48,6 @@ private:
     ExprPtr ParseUnaryExpr();
     ExprPtr ParsePrimaryExpr();
 
-    ExprPtr ParseComparison(); // column op literal OR literal op column
+    ExprPtr ParseComparison(); // operand op operand, or column BETWEEN lit AND lit
     CompareOp ParseCompareOp(const Token &tok);
 };

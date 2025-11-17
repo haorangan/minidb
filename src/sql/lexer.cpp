@@ -55,13 +55,29 @@ static TokenType KeywordType(const std::string &upper) {
     if (upper == "LIMIT")   return TokenType::LIMIT;
     if (upper == "ASC")     return TokenType::ASC;
     if (upper == "DESC")    return TokenType::DESC;
+    if (upper == "JOIN")    return TokenType::JOIN;
+    if (upper == "INNER")   return TokenType::INNER;
+    if (upper == "ON")      return TokenType::ON;
+    if (upper == "GROUP")   return TokenType::GROUP;
+    if (upper == "EXPLAIN") return TokenType::EXPLAIN;
     return TokenType::IDENT;
 }
 
 Token Lexer::LexIdentOrKeyword() {
     size_t start = pos_;
-    while (std::isalnum(static_cast<unsigned char>(CurrentChar())) || CurrentChar() == '_') {
+    auto is_ident_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    };
+    while (is_ident_char(CurrentChar())) {
         Advance();
+    }
+    // Qualified name: "table.column" lexes as one identifier
+    if (CurrentChar() == '.' && pos_ + 1 < input_.size() &&
+        (std::isalpha(static_cast<unsigned char>(input_[pos_ + 1])) || input_[pos_ + 1] == '_')) {
+        Advance();
+        while (is_ident_char(CurrentChar())) {
+            Advance();
+        }
     }
     std::string text = input_.substr(start, pos_ - start);
     std::string upper = text;

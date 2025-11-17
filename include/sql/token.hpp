@@ -48,6 +48,12 @@ enum class TokenType {
     ASC,
     DESC,
 
+    JOIN,
+    INNER,
+    ON,
+    GROUP,
+    EXPLAIN,
+
     END_OF_FILE,
     UNKNOWN
 };

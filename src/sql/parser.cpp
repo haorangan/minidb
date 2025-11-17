@@ -4,6 +4,8 @@
 
 #include "sql/parser.hpp"
 
+#include <cctype>
+
 Parser::Parser(Lexer lexer)
     : lexer_(std::move(lexer)) {
     current_ = lexer_.NextToken();
@@ -31,26 +33,84 @@ SelectStatement Parser::ParseSelect() {
     return ParseSelectInternal();
 }
 
+// Function call in a SELECT list / ORDER BY: IDENT followed by '('
+bool Parser::AtAggregateCall() {
+    return current_.type == TokenType::IDENT && lexer_.PeekToken().type == TokenType::LPAREN;
+}
+
+// agg_call := (COUNT | SUM | MIN | MAX | AVG) '(' ('*' | column) ')'
+SelectItem Parser::ParseAggregateCall() {
+    std::string upper = current_.lexeme;
+    for (char &c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    SelectItem item;
+    item.is_aggregate = true;
+    if (upper == "COUNT")      item.agg = AggType::COUNT;
+    else if (upper == "SUM")   item.agg = AggType::SUM;
+    else if (upper == "MIN")   item.agg = AggType::MIN;
+    else if (upper == "MAX")   item.agg = AggType::MAX;
+    else if (upper == "AVG")   item.agg = AggType::AVG;
+    else throw SqlParseError("Unknown function: " + current_.lexeme);
+    Advance();
+
+    Expect(TokenType::LPAREN, "Expected ( after " + upper);
+    if (Match(TokenType::STAR)) {
+        if (item.agg != AggType::COUNT) {
+            throw SqlParseError("Only COUNT accepts *");
+        }
+    } else {
+        if (current_.type != TokenType::IDENT) {
+            throw SqlParseError("Expected column name in " + upper + "()");
+        }
+        item.column = current_.lexeme;
+        Advance();
+    }
+    Expect(TokenType::RPAREN, "Expected ) after " + upper + " argument");
+    return item;
+}
+
+// select_item := (column | agg_call) [AS alias]
+SelectItem Parser::ParseSelectItem() {
+    SelectItem item;
+    if (AtAggregateCall()) {
+        item = ParseAggregateCall();
+    } else if (current_.type == TokenType::IDENT) {
+        item.column = current_.lexeme;
+        Advance();
+    } else {
+        throw SqlParseError("Expected column name, aggregate, or * in SELECT list");
+    }
+
+    if (Match(TokenType::AS)) {
+        if (current_.type != TokenType::IDENT) {
+            throw SqlParseError("Expected alias after AS");
+        }
+        item.alias = current_.lexeme;
+        Advance();
+    }
+    return item;
+}
+
+/*
+ * select := SELECT ('*' | select_item (',' select_item)*)
+ *           FROM table ([INNER] JOIN table ON expr)*
+ *           [WHERE expr]
+ *           [GROUP BY column (',' column)*]
+ *           [ORDER BY name [ASC|DESC] (',' name [ASC|DESC])*]
+ *           [LIMIT n]
+ */
 SelectStatement Parser::ParseSelectInternal() {
     SelectStatement stmt;
 
     // SELECT
     Expect(TokenType::SELECT, "Expected SELECT");
 
-    // select list: * or col[, col]*
+    // select list: * or item[, item]*
     if (Match(TokenType::STAR)) {
         // leave select_list empty to mean "*"
     } else {
-        // at least one identifier
-        if (current_.type != TokenType::IDENT) {
-            throw SqlParseError("Expected column name or * after SELECT");
-        }
         while (true) {
-            if (current_.type != TokenType::IDENT) {
-                throw SqlParseError("Expected column name in SELECT list");
-            }
-            stmt.select_list.push_back(ColumnRef{current_.lexeme});
-            Advance();
+            stmt.select_list.push_back(ParseSelectItem());
             if (!Match(TokenType::COMMA)) break;
         }
     }
@@ -63,25 +123,57 @@ SelectStatement Parser::ParseSelectInternal() {
     stmt.table_name = current_.lexeme;
     Advance();
 
+    // Zero or more [INNER] JOIN <ident> ON <expr>
+    while (current_.type == TokenType::JOIN || current_.type == TokenType::INNER) {
+        if (Match(TokenType::INNER)) {
+            Expect(TokenType::JOIN, "Expected JOIN after INNER");
+        } else {
+            Advance();  // JOIN
+        }
+        if (current_.type != TokenType::IDENT) {
+            throw SqlParseError("Expected table name after JOIN");
+        }
+        JoinClause join;
+        join.table_name = current_.lexeme;
+        Advance();
+        Expect(TokenType::ON, "Expected ON after JOIN table");
+        join.on = ParseExpr();
+        stmt.joins.push_back(std::move(join));
+    }
+
     // Optional WHERE
     if (Match(TokenType::WHERE)) {
         stmt.where = ParseExpr();
+    }
+
+    // Optional GROUP BY
+    if (Match(TokenType::GROUP)) {
+        Expect(TokenType::BY, "Expected BY after GROUP");
+        while (true) {
+            if (current_.type != TokenType::IDENT) {
+                throw SqlParseError("Expected column name in GROUP BY");
+            }
+            stmt.group_by.push_back(current_.lexeme);
+            Advance();
+            if (!Match(TokenType::COMMA)) break;
+        }
     }
 
     // Optional ORDER BY
     if (Match(TokenType::ORDER)) {
         Expect(TokenType::BY, "Expected BY after ORDER");
 
-        // For now, support one or more ORDER BY columns in syntax,
-        // but we'll really only use the first in execution.
         while (true) {
-            if (current_.type != TokenType::IDENT) {
+            OrderByItem item;
+            if (AtAggregateCall()) {
+                item.column_name = DisplayName(ParseAggregateCall());
+            } else if (current_.type == TokenType::IDENT) {
+                item.column_name = current_.lexeme;
+                Advance();
+            } else {
                 throw SqlParseError("Expected column name in ORDER BY");
             }
-            OrderByItem item;
-            item.column_name = current_.lexeme;
             item.ascending = true; // default ASC
-            Advance();
 
             // Optional ASC/DESC
             if (current_.type == TokenType::ASC) {
@@ -185,8 +277,7 @@ CompareOp Parser::ParseCompareOp(const Token &tok) {
 }
 
 /*
- * comparison := column op literal
- *             | literal op column
+ * comparison := operand op operand       (operand := column | literal)
  *             | column BETWEEN lit AND lit   (syntactic sugar for range)
  */
 ExprPtr Parser::ParseComparison() {
