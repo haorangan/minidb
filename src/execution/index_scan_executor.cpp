@@ -5,12 +5,13 @@
 #include "execution/index_scan_executor.hpp"
 
 IndexScanExecutor::IndexScanExecutor(BufferPoolManager *bpm,
-                                     TableHeap *table,
+                                     TableHeap * /*table*/,
                                      BPlusTreeIndex *index,
-                                     int32_t key)
+                                     int32_t key,
+                                     std::string label)
     : bpm_(bpm),
-      table_(table),
       index_(index),
+      label_(std::move(label)),
       scan_type_(ScanType::POINT),
       point_key_(key),
       low_key_(0),
@@ -19,19 +20,25 @@ IndexScanExecutor::IndexScanExecutor(BufferPoolManager *bpm,
       match_idx_(0) {}
 
 IndexScanExecutor::IndexScanExecutor(BufferPoolManager *bpm,
-                                     TableHeap *table,
+                                     TableHeap * /*table*/,
                                      BPlusTreeIndex *index,
                                      int32_t low_key,
-                                     int32_t high_key)
+                                     int32_t high_key,
+                                     std::string label)
     : bpm_(bpm),
-      table_(table),
       index_(index),
+      label_(std::move(label)),
       scan_type_(ScanType::RANGE),
       point_key_(0),
       low_key_(low_key),
       high_key_(high_key),
       initialized_(false),
       match_idx_(0) {}
+
+void IndexScanExecutor::Init() {
+    initialized_ = false;
+    match_idx_ = 0;
+}
 
 void IndexScanExecutor::InitMatches() {
     if (initialized_) return;

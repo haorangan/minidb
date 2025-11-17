@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "execution/executor.hpp"
 #include "index/bplus_tree_index.hpp"
 #include "catalog/table_heap.hpp"
 #include "storage/buffer_pool_manager.hpp"
@@ -11,9 +12,10 @@
 #include "common/tuple.hpp"
 #include "common/types.hpp"
 
+#include <string>
 #include <vector>
 
-class IndexScanExecutor {
+class IndexScanExecutor : public Executor {
 public:
     enum class ScanType {
         POINT,
@@ -24,22 +26,28 @@ public:
     IndexScanExecutor(BufferPoolManager *bpm,
                       TableHeap *table,
                       BPlusTreeIndex *index,
-                      int32_t key);
+                      int32_t key,
+                      std::string label = "");
 
     // Range lookup: low <= key <= high
     IndexScanExecutor(BufferPoolManager *bpm,
                       TableHeap *table,
                       BPlusTreeIndex *index,
                       int32_t low_key,
-                      int32_t high_key);
+                      int32_t high_key,
+                      std::string label = "");
+
+    void Init() override;
 
     // Get next matching tuple; returns false when exhausted
-    bool Next(Tuple &out, RID &rid);
+    bool Next(Tuple &out, RID &rid) override;
+
+    std::string Name() const override { return "IndexScan(" + label_ + ")"; }
 
 private:
     BufferPoolManager *bpm_;
-    TableHeap *table_;
     BPlusTreeIndex *index_;
+    std::string label_;
 
     ScanType scan_type_;
     int32_t point_key_;

@@ -4,22 +4,28 @@
 
 #pragma once
 
-#include "execution/seq_scan_executor.hpp"
+#include "execution/executor.hpp"
 #include "common/tuple.hpp"
 #include "common/types.hpp"
 
 #include <functional>
+#include <memory>
 
-class FilterExecutor {
+class FilterExecutor : public Executor {
 public:
     using Predicate = std::function<bool(const Tuple&)>;
 
-    FilterExecutor(SeqScanExecutor *child, Predicate pred)
-        : child_(child), pred_(std::move(pred)) {}
+    FilterExecutor(std::unique_ptr<Executor> child, Predicate pred)
+        : child_(std::move(child)), pred_(std::move(pred)) {}
 
-    bool Next(Tuple &out, RID &rid);
+    void Init() override { child_->Init(); }
+
+    bool Next(Tuple &out, RID &rid) override;
+
+    std::string Name() const override { return "Filter"; }
+    std::vector<const Executor *> Children() const override { return {child_.get()}; }
 
 private:
-    SeqScanExecutor *child_;
+    std::unique_ptr<Executor> child_;
     Predicate pred_;
 };

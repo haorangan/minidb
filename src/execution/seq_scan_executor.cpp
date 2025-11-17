@@ -4,12 +4,18 @@
 
 #include "execution/seq_scan_executor.hpp"
 
-SeqScanExecutor::SeqScanExecutor(BufferPoolManager *bpm, TableHeap *table)
+SeqScanExecutor::SeqScanExecutor(BufferPoolManager *bpm, TableHeap *table, std::string table_name)
     : bpm_(bpm),
       table_(table),
+      table_name_(std::move(table_name)),
       pages_(table_->GetPages()),
       page_idx_(0),
       slot_idx_(0) {}
+
+void SeqScanExecutor::Init() {
+    page_idx_ = 0;
+    slot_idx_ = 0;
+}
 
 bool SeqScanExecutor::Next(Tuple &out, RID &rid) {
     char buf[PAGE_SIZE];  // a tuple can never be larger than a page
