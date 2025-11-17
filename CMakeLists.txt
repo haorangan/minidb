@@ -34,6 +34,11 @@ add_executable(minidb_tests
 )
 target_link_libraries(minidb_tests PRIVATE minidb_lib)
 
+add_executable(minidb_query_tests
+        ${CMAKE_SOURCE_DIR}/tests/query_test.cpp
+)
+target_link_libraries(minidb_query_tests PRIVATE minidb_lib)
+
 add_executable(minidb_bench
         ${CMAKE_SOURCE_DIR}/bench/point_query_bench.cpp
 )
@@ -41,6 +46,7 @@ target_link_libraries(minidb_bench PRIVATE minidb_lib)
 
 enable_testing()
 add_test(NAME bplus_tree_test COMMAND minidb_tests)
+add_test(NAME query_test COMMAND minidb_query_tests)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
         CMAKE_CXX_COMPILER_ID MATCHES "GNU")
