@@ -60,6 +60,9 @@ static TokenType KeywordType(const std::string &upper) {
     if (upper == "ON")      return TokenType::ON;
     if (upper == "GROUP")   return TokenType::GROUP;
     if (upper == "EXPLAIN") return TokenType::EXPLAIN;
+    if (upper == "BEGIN")    return TokenType::BEGIN;
+    if (upper == "COMMIT")   return TokenType::COMMIT;
+    if (upper == "ROLLBACK") return TokenType::ROLLBACK;
     return TokenType::IDENT;
 }
 

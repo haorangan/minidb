@@ -53,6 +53,9 @@ enum class TokenType {
     ON,
     GROUP,
     EXPLAIN,
+    BEGIN,
+    COMMIT,
+    ROLLBACK,
 
     END_OF_FILE,
     UNKNOWN
