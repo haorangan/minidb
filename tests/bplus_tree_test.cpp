@@ -3,12 +3,7 @@
 #include "storage/disk_manager.hpp"
 #include "storage/buffer_pool_manager.hpp"
 #include "index/bplus_tree_index.hpp"
-#include "catalog/catalog.hpp"
-#include "execution/create_table_executor.hpp"
-#include "execution/insert_executor.hpp"
-#include "sql/lexer.hpp"
-#include "sql/parser.hpp"
-#include "sql/planner.hpp"
+#include "db/database.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -55,7 +50,7 @@ struct Env {
     Env(const std::string &name, size_t pool_size) : file(name) {
         std::remove(file.c_str());
         disk = std::make_unique<DiskManager>(file);
-        bpm = std::make_unique<BufferPoolManager>(pool_size, disk.get(), nullptr);
+        bpm = std::make_unique<BufferPoolManager>(pool_size, disk.get());
     }
     ~Env() {
         bpm.reset();
@@ -119,45 +114,38 @@ static void RunAgainstReference(const std::string &name, const std::vector<int32
 
 static void TestSqlUsesIndexOnFirstColumn() {
     std::cout << "sql_index_on_first_column" << std::endl;
-    Env env("sql_index_test.db", 64);
-    Catalog catalog;
-    Planner planner(env.bpm.get(), &catalog);
+    std::remove("sql_index_test.db");
+    std::remove("sql_index_test.wal");
+    {
+        Database db("sql_index_test.db", "sql_index_test.wal");
+        db.Execute("CREATE TABLE users (id INT, score INT);");
+        db.Execute("BEGIN;");
+        for (int i = 0; i < 5000; ++i) {
+            db.Execute("INSERT INTO users VALUES (" + std::to_string(i) + ", " + std::to_string(i * 10) + ");");
+        }
+        db.Execute("COMMIT;");
 
-    CreateTableStatement create{"users", {{"id", "INT"}, {"score", "INT"}}};
-    CHECK(CreateTableExecutor(&catalog, env.bpm.get(), create).Execute());
-    BPlusTreeIndex index(env.bpm.get());
-    index.Init();
-    catalog.RegisterIndex("users", "id", &index);
+        auto plan = [&](const std::string &sql) { return db.Execute("EXPLAIN " + sql).message; };
+        auto uses_index = [&](const std::string &sql) {
+            return plan(sql).find("IndexScan") != std::string::npos;
+        };
 
-    for (int i = 0; i < 5000; ++i) {
-        InsertStatement ins{"users", {i, i * 10}};
-        CHECK(InsertExecutor(&catalog, env.bpm.get(), ins).Execute());
+        std::string q = "SELECT * FROM users WHERE id = 4321;";
+        auto rows = db.Execute(q).rows;
+        CHECK(uses_index(q));
+        CHECK(rows.size() == 1 && rows[0].GetInt(0) == 4321 && rows[0].GetInt(1) == 43210);
+
+        q = "SELECT * FROM users WHERE id BETWEEN 100 AND 199;";
+        CHECK(uses_index(q));
+        CHECK(db.Execute(q).rows.size() == 100);
+
+        q = "SELECT * FROM users WHERE score = 43210;";
+        rows = db.Execute(q).rows;
+        CHECK(!uses_index(q));
+        CHECK(rows.size() == 1 && rows[0].GetInt(0) == 4321);
     }
-
-    auto run = [&](const std::string &sql, bool &used_index) {
-        Parser parser{Lexer(sql)};
-        SelectStatement stmt = parser.ParseSelect();
-        PlanResult plan = planner.PlanSelect(stmt);
-        used_index = plan.use_index;
-        std::vector<Tuple> rows;
-        Tuple t;
-        RID rid;
-        while (plan.root->Next(t, rid)) rows.push_back(t);
-        return rows;
-    };
-
-    bool used_index = false;
-    auto rows = run("SELECT * FROM users WHERE id = 4321;", used_index);
-    CHECK(used_index);
-    CHECK(rows.size() == 1 && rows[0].GetInt(0) == 4321 && rows[0].GetInt(1) == 43210);
-
-    rows = run("SELECT * FROM users WHERE id BETWEEN 100 AND 199;", used_index);
-    CHECK(used_index);
-    CHECK(rows.size() == 100);
-
-    rows = run("SELECT * FROM users WHERE score = 43210;", used_index);
-    CHECK(!used_index);
-    CHECK(rows.size() == 1 && rows[0].GetInt(0) == 4321);
+    std::remove("sql_index_test.db");
+    std::remove("sql_index_test.wal");
 }
 
 int main() {

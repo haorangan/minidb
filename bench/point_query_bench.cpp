@@ -1,21 +1,13 @@
 // Point-query latency benchmark.
 //
-// Loads N rows (shuffled keys) into `t (id INT, val INT)` through the normal
-// insert path, then times SQL point queries end to end: lex, parse, plan,
-// index scan, and tuple fetch from the heap. Each result is checked.
+// Loads N rows (shuffled keys) into `t (id INT, val INT)` with SQL INSERTs,
+// committed in batches (WAL + fsync per commit), then times SQL point queries
+// end to end: lex, parse, plan, index scan, and tuple fetch from the heap.
+// Each result is checked.
 //
-// Usage: minidb_bench [--rows N] [--queries Q] [--pool FRAMES] [--scans S] [--no-wal]
+// Usage: minidb_bench [--rows N] [--queries Q] [--pool FRAMES] [--batch ROWS] [--scans S]
 
-#include "storage/disk_manager.hpp"
-#include "storage/buffer_pool_manager.hpp"
-#include "log/log_manager.hpp"
-#include "index/bplus_tree_index.hpp"
-#include "catalog/catalog.hpp"
-#include "execution/create_table_executor.hpp"
-#include "execution/insert_executor.hpp"
-#include "sql/lexer.hpp"
-#include "sql/parser.hpp"
-#include "sql/planner.hpp"
+#include "db/database.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -36,19 +28,6 @@ static double MicrosSince(Clock::time_point start) {
     return std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 }
 
-static std::vector<Tuple> RunSelect(Planner &planner, const std::string &sql, bool &used_index) {
-    Parser parser{Lexer(sql)};
-    SelectStatement stmt = parser.ParseSelect();
-    PlanResult plan = planner.PlanSelect(stmt);
-    used_index = plan.use_index;
-
-    std::vector<Tuple> rows;
-    Tuple t;
-    RID rid;
-    while (plan.root->Next(t, rid)) rows.push_back(t);
-    return rows;
-}
-
 static void PrintLatencies(const std::string &label, std::vector<double> us) {
     std::sort(us.begin(), us.end());
     auto pct = [&](double p) { return us[static_cast<size_t>(p * (us.size() - 1))]; };
@@ -62,9 +41,9 @@ static void PrintLatencies(const std::string &label, std::vector<double> us) {
 int main(int argc, char **argv) {
     int64_t rows = 1000000;
     int queries = 10000;
-    size_t pool = 4096;
+    size_t pool = 8192;
+    int64_t batch = 0;  // 0 = pick from pool size
     int scans = 5;
-    bool wal = true;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -73,12 +52,16 @@ int main(int argc, char **argv) {
         else if (arg == "--queries") queries = static_cast<int>(next());
         else if (arg == "--pool") pool = static_cast<size_t>(next());
         else if (arg == "--scans") scans = static_cast<int>(next());
-        else if (arg == "--no-wal") wal = false;
+        else if (arg == "--batch") batch = next();
         else {
             std::cerr << "Unknown argument: " << arg << "\n";
             return 2;
         }
     }
+
+    // A transaction's pages stay in the buffer pool until it commits (no-steal),
+    // and each row can touch a different leaf, so a batch must fit in the pool
+    if (batch <= 0) batch = std::max<int64_t>(1, std::min<int64_t>(5000, static_cast<int64_t>(pool) / 2 - 16));
 
     const std::string db_file = "bench.db";
     const std::string wal_file = "bench_wal.log";
@@ -86,23 +69,17 @@ int main(int argc, char **argv) {
     std::remove(wal_file.c_str());
 
     {
-        DiskManager disk(db_file);
-        std::unique_ptr<LogManager> log;
-        if (wal) log = std::make_unique<LogManager>(wal_file, &disk);
-        BufferPoolManager bpm(pool, &disk, log.get());
-        Catalog catalog;
-        Planner planner(&bpm, &catalog);
+        Database::Options options;
+        options.pool_size = pool;
+        options.checkpoint_bytes = 64u << 20;
+        Database db(db_file, wal_file, options);
 
         std::cout << "MiniDB point-query benchmark\n"
                   << "  rows " << rows << ", buffer pool " << pool << " frames ("
-                  << pool * PAGE_SIZE / (1024 * 1024) << " MiB), WAL " << (wal ? "on" : "off")
-                  << "\n\n";
+                  << pool * PAGE_SIZE / (1024 * 1024) << " MiB), " << batch
+                  << " rows per committed transaction\n\n";
 
-        CreateTableStatement create{"t", {{"id", "INT"}, {"val", "INT"}}};
-        if (!CreateTableExecutor(&catalog, &bpm, create).Execute()) return 1;
-        BPlusTreeIndex index(&bpm);
-        index.Init();
-        catalog.RegisterIndex("t", "id", &index);
+        db.Execute("CREATE TABLE t (id INT, val INT);");
 
         // ---- Load ----
         std::vector<int32_t> keys(static_cast<size_t>(rows));
@@ -111,23 +88,31 @@ int main(int argc, char **argv) {
         std::shuffle(keys.begin(), keys.end(), rng);
 
         auto load_start = Clock::now();
-        for (int32_t k : keys) {
-            InsertStatement ins{"t", {k, static_cast<int64_t>(k) * 7}};
-            if (!InsertExecutor(&catalog, &bpm, ins).Execute()) {
-                std::cerr << "Insert failed at key " << k << "\n";
-                return 1;
-            }
+        for (size_t i = 0; i < keys.size(); ++i) {
+            if (i % batch == 0) db.Execute("BEGIN;");
+            db.Execute("INSERT INTO t VALUES (" + std::to_string(keys[i]) + ", " +
+                       std::to_string(static_cast<int64_t>(keys[i]) * 7) + ");");
+            if ((i + 1) % batch == 0 || i + 1 == keys.size()) db.Execute("COMMIT;");
         }
         double load_s = MicrosSince(load_start) / 1e6;
 
+        BPlusTreeIndex *index = db.GetCatalog().GetIndex("t", "id");
         size_t indexed = 0;
-        bool valid = index.Validate(&indexed);
+        bool valid = index->Validate(&indexed);
         std::cout << std::fixed << std::setprecision(2)
                   << "Load: " << load_s << " s (" << static_cast<int64_t>(rows / load_s)
                   << " rows/s)\n"
-                  << "Index: height " << index.GetHeight() << ", " << indexed
+                  << "Index: height " << index->GetHeight() << ", " << indexed
                   << " entries, invariants " << (valid ? "OK" : "VIOLATED") << "\n\n";
         if (!valid || indexed != static_cast<size_t>(rows)) return 1;
+
+        auto uses_index = [&](const std::string &sql) {
+            return db.Execute("EXPLAIN " + sql).message.find("IndexScan") != std::string::npos;
+        };
+        if (!uses_index("SELECT * FROM t WHERE id = 1;") || uses_index("SELECT * FROM t WHERE val = 7;")) {
+            std::cerr << "Unexpected query plan\n";
+            return 1;
+        }
 
         // ---- Indexed point queries ----
         std::uniform_int_distribution<int32_t> pick(0, static_cast<int32_t>(rows - 1));
@@ -138,12 +123,11 @@ int main(int argc, char **argv) {
             int32_t k = pick(rng);
             std::string sql = "SELECT * FROM t WHERE id = " + std::to_string(k) + ";";
 
-            bool used_index = false;
             auto start = Clock::now();
-            auto result = RunSelect(planner, sql, used_index);
+            auto result = db.Execute(sql).rows;
             latencies.push_back(MicrosSince(start));
 
-            if (!used_index || result.size() != 1 || result[0].GetInt(0) != k ||
+            if (result.size() != 1 || result[0].GetInt(0) != k ||
                 result[0].GetInt(1) != static_cast<int32_t>(static_cast<int64_t>(k) * 7)) {
                 ++wrong;
             }
@@ -159,11 +143,10 @@ int main(int argc, char **argv) {
                 int32_t k = pick(rng);
                 std::string sql = "SELECT * FROM t WHERE val = " +
                                   std::to_string(static_cast<int64_t>(k) * 7) + ";";
-                bool used_index = true;
                 auto start = Clock::now();
-                auto result = RunSelect(planner, sql, used_index);
+                auto result = db.Execute(sql).rows;
                 latencies.push_back(MicrosSince(start));
-                if (used_index || result.size() != 1 || result[0].GetInt(0) != k) ++wrong_scan;
+                if (result.size() != 1 || result[0].GetInt(0) != k) ++wrong_scan;
             }
             PrintLatencies("Full scan (no index):   SELECT * FROM t WHERE val = ?", latencies);
             std::cout << "  incorrect results: " << wrong_scan << "\n";

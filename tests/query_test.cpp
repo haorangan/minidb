@@ -1,15 +1,7 @@
 // End-to-end query tests for joins, aggregation, sort/limit, and planning.
 // Each SQL result is compared with the same answer computed directly in C++.
 
-#include "storage/disk_manager.hpp"
-#include "storage/buffer_pool_manager.hpp"
-#include "index/bplus_tree_index.hpp"
-#include "catalog/catalog.hpp"
-#include "execution/create_table_executor.hpp"
-#include "execution/insert_executor.hpp"
-#include "sql/lexer.hpp"
-#include "sql/parser.hpp"
-#include "sql/planner.hpp"
+#include "db/database.hpp"
 #include "test_util.hpp"
 
 #include <algorithm>
@@ -23,54 +15,46 @@
 using Row = std::vector<int64_t>;
 using Rows = std::vector<Row>;
 
-// A throwaway database: tables get a B+ tree on their first column, like the CLI
+static bool Contains(const std::string &haystack, const std::string &needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+// A throwaway database
 class TestDb {
 public:
     TestDb() {
         std::remove(file_.c_str());
-        disk_ = std::make_unique<DiskManager>(file_);
-        bpm_ = std::make_unique<BufferPoolManager>(1024, disk_.get(), nullptr);
-        planner_ = std::make_unique<Planner>(bpm_.get(), &catalog_);
+        std::remove(wal_.c_str());
+        db_ = std::make_unique<Database>(file_, wal_);
     }
     ~TestDb() {
-        planner_.reset();
-        bpm_.reset();
-        disk_.reset();
+        db_.reset();
         std::remove(file_.c_str());
+        std::remove(wal_.c_str());
     }
 
-    void CreateTable(const std::string &name, const std::vector<std::string> &cols) {
-        CreateTableStatement stmt{name, {}};
-        for (const auto &c : cols) stmt.columns.push_back({c, "INT"});
-        CHECK(CreateTableExecutor(&catalog_, bpm_.get(), stmt).Execute());
+    void Exec(const std::string &sql) { db_->Execute(sql); }
 
-        auto index = std::make_unique<BPlusTreeIndex>(bpm_.get());
-        index->Init();
-        catalog_.RegisterIndex(name, cols[0], index.get());
-        indexes_.push_back(std::move(index));
+    void CreateTable(const std::string &name, const std::vector<std::string> &cols) {
+        std::string sql = "CREATE TABLE " + name + " (";
+        for (size_t i = 0; i < cols.size(); ++i) sql += (i ? ", " : "") + cols[i] + " INT";
+        Exec(sql + ");");
     }
 
     void Insert(const std::string &table, const Row &values) {
-        InsertStatement stmt{table, values};
-        CHECK(InsertExecutor(&catalog_, bpm_.get(), stmt).Execute());
-    }
-
-    PlanResult Plan(const std::string &sql) {
-        Parser parser{Lexer(sql)};
-        SelectStatement stmt = parser.ParseSelect();
-        return planner_->PlanSelect(stmt);
+        std::string sql = "INSERT INTO " + table + " VALUES (";
+        for (size_t i = 0; i < values.size(); ++i) sql += (i ? ", " : "") + std::to_string(values[i]);
+        Exec(sql + ");");
     }
 
     Rows Query(const std::string &sql) {
-        PlanResult plan = Plan(sql);
         Rows rows;
-        Tuple t;
-        RID rid;
-        while (plan.root->Next(t, rid)) rows.push_back(t.GetValues());
+        for (const Tuple &t : db_->Execute(sql).rows) rows.push_back(t.GetValues());
         return rows;
     }
 
-    std::string ExplainOf(const std::string &sql) { return Explain(*Plan(sql).root); }
+    std::string ExplainOf(const std::string &sql) { return db_->Execute("EXPLAIN " + sql).message; }
+    bool UsesIndex(const std::string &sql) { return Contains(ExplainOf(sql), "IndexScan"); }
 
     // True if planning or running the query throws
     bool Fails(const std::string &sql) {
@@ -84,20 +68,13 @@ public:
 
 private:
     std::string file_ = "query_test.db";
-    std::unique_ptr<DiskManager> disk_;
-    std::unique_ptr<BufferPoolManager> bpm_;
-    Catalog catalog_;
-    std::unique_ptr<Planner> planner_;
-    std::vector<std::unique_ptr<BPlusTreeIndex>> indexes_;
+    std::string wal_ = "query_test.wal";
+    std::unique_ptr<Database> db_;
 };
 
 static Rows Sorted(Rows rows) {
     std::sort(rows.begin(), rows.end());
     return rows;
-}
-
-static bool Contains(const std::string &haystack, const std::string &needle) {
-    return haystack.find(needle) != std::string::npos;
 }
 
 // ---- Test data ----
@@ -125,9 +102,11 @@ static void Load(TestDb &db) {
         g_region.push_back({d, d * 10 + 2});
     }
 
+    db.Exec("BEGIN;");
     for (const auto &e : g_emp) db.Insert("emp", {e.id, e.dept, e.salary});
     for (const auto &d : g_dept) db.Insert("dept", {d.id, d.budget});
     for (const auto &r : g_region) db.Insert("region", {r.dept_id, r.code});
+    db.Exec("COMMIT;");
 }
 
 // ---- Joins ----
@@ -271,13 +250,12 @@ static void TestAggregateOverJoin(TestDb &db) {
 
 static void TestIndexStillUsed(TestDb &db) {
     std::cout << "index_still_used" << std::endl;
-    PlanResult plan = db.Plan("SELECT * FROM emp WHERE id = 42;");
-    CHECK(plan.use_index);
+    CHECK(db.UsesIndex("SELECT * FROM emp WHERE id = 42;"));
     CHECK(db.Query("SELECT salary FROM emp WHERE id = 42;") == Rows{{(42 * 37) % 1000}});
 
     // Literal outside int32 must not be truncated onto key 42
     CHECK(db.Query("SELECT * FROM emp WHERE id = 4294967338;").empty());
-    CHECK(!db.Plan("SELECT * FROM emp WHERE id = 4294967338;").use_index);
+    CHECK(!db.UsesIndex("SELECT * FROM emp WHERE id = 4294967338;"));
 
     // Range bound past INT32_MAX is clamped, not overflowed
     CHECK(db.Query("SELECT COUNT(*) FROM emp WHERE id > 495 AND id <= 2147483647;") == Rows{{4}});
