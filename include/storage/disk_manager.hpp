@@ -22,6 +22,12 @@ public:
 
     page_id_t AllocatePage();
 
+    // Number of pages the file holds (or will hold, counting allocated pages)
+    page_id_t NumPages() const { return next_page_id_; }
+
+    // Force written pages to stable storage
+    void Sync();
+
 private:
     int fd_{-1};
     std::string filename_;

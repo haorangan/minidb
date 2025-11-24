@@ -5,6 +5,8 @@
 
 #include "storage/disk_manager.hpp"
 
+#include "common/crash_point.hpp"
+
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -57,6 +59,13 @@ void DiskManager::ReadPage(page_id_t page_id, char *page_data) {
 void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
     // Writing past EOF extends the file; any gap reads back as zeros
     off_t offset = static_cast<off_t>(page_id) * PAGE_SIZE;
+
+    // Torn write: only half the page reaches the file before the crash
+    if (CrashPointHit("disk.torn_write")) {
+        (void)::pwrite(fd_, page_data, PAGE_SIZE / 2, offset);
+        CrashNow();
+    }
+
     size_t done = 0;
     while (done < PAGE_SIZE) {
         ssize_t n = ::pwrite(fd_, page_data + done, PAGE_SIZE - done, offset + static_cast<off_t>(done));
@@ -65,6 +74,17 @@ void DiskManager::WritePage(page_id_t page_id, const char *page_data) {
             throw IoError("DiskManager: write failed on", filename_);
         }
         done += static_cast<size_t>(n);
+    }
+
+    // Recovery writes pages that may lie past the old end of file
+    if (page_id >= next_page_id_) {
+        next_page_id_ = page_id + 1;
+    }
+}
+
+void DiskManager::Sync() {
+    if (::fsync(fd_) != 0) {
+        throw IoError("DiskManager: fsync failed on", filename_);
     }
 }
 
