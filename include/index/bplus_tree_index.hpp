@@ -24,6 +24,9 @@ public:
     // Allocate and initialize the root leaf page (call once when creating index)
     void Init();
 
+    // Attach to an existing tree. The root page id never changes after Init().
+    void Open(page_id_t root_page_id);
+
     // Insert a single (key, rid) into the index, splitting nodes as needed.
     bool Insert(int32_t key, const RID &rid);
 

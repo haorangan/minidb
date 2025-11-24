@@ -8,20 +8,16 @@
 #include "catalog/schema.hpp"
 #include "catalog/table_heap.hpp"
 #include "sql/ast.hpp"
-#include "storage/buffer_pool_manager.hpp"
 
 class CreateTableExecutor {
 public:
-    CreateTableExecutor(Catalog *catalog,
-                        BufferPoolManager *bpm,
-                        const CreateTableStatement &stmt)
-        : catalog_(catalog), bpm_(bpm), stmt_(stmt) {}
+    CreateTableExecutor(Catalog *catalog, const CreateTableStatement &stmt)
+        : catalog_(catalog), stmt_(stmt) {}
 
     bool Execute();
 
 private:
     Catalog *catalog_;
-    BufferPoolManager *bpm_;
     CreateTableStatement stmt_;
 
     TypeId ParseType(const std::string &type_name);

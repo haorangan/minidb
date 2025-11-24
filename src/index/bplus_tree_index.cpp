@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <unordered_set>
 
 // ---- Header field accessors ----
 
@@ -104,6 +105,10 @@ void BPlusTreeIndex::Init() {
     bpm_->UnpinPage(pid, /*is_dirty=*/true);
 }
 
+void BPlusTreeIndex::Open(page_id_t root_page_id) {
+    root_page_id_ = root_page_id;
+}
+
 bool BPlusTreeIndex::Insert(int32_t key, const RID &rid) {
     if (root_page_id_ == -1) {
         // index not initialized
@@ -118,20 +123,28 @@ bool BPlusTreeIndex::Insert(int32_t key, const RID &rid) {
         return true;
     }
 
-    // Root split: grow the tree by one level
-    page_id_t new_root_pid;
-    Page *new_root = bpm_->NewPage(new_root_pid);
-    if (!new_root) {
+    // Root split: grow the tree by one level. The root keeps its page id (the
+    // catalog stores it), so its left half moves to a new page instead.
+    page_id_t moved_pid;
+    Page *moved = bpm_->NewPage(moved_pid);
+    if (!moved) {
         return false;
     }
-    InitInternalPage(new_root);
-    NumKeys(new_root) = 1;
-    Children(new_root)[0] = root_page_id_;
-    Children(new_root)[1] = split.right;
-    Keys(new_root)[0] = split.separator;
-    bpm_->UnpinPage(new_root_pid, /*is_dirty=*/true);
+    Page *root = bpm_->FetchPage(root_page_id_);
+    if (!root) {
+        bpm_->UnpinPage(moved_pid, /*is_dirty=*/false);
+        return false;
+    }
+    std::memcpy(moved->GetData(), root->GetData(), PAGE_SIZE);
 
-    root_page_id_ = new_root_pid;
+    InitInternalPage(root);
+    NumKeys(root) = 1;
+    Children(root)[0] = moved_pid;
+    Children(root)[1] = split.right;
+    Keys(root)[0] = split.separator;
+
+    bpm_->UnpinPage(moved_pid, /*is_dirty=*/true);
+    bpm_->UnpinPage(root_page_id_, /*is_dirty=*/true);
     return true;
 }
 
@@ -414,7 +427,11 @@ bool BPlusTreeIndex::Validate(size_t *num_entries) {
     size_t count = 0;
     int32_t prev = std::numeric_limits<int32_t>::min();
     page_id_t pid = FindLeaf(std::numeric_limits<int32_t>::min());
+    std::unordered_set<page_id_t> seen;
     while (pid != -1) {
+        if (!seen.insert(pid).second) {
+            return false;  // cycle in the leaf chain
+        }
         Page *page = bpm_->FetchPage(pid);
         if (!page) {
             return false;

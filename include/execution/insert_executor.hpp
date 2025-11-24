@@ -13,16 +13,15 @@
 
 class InsertExecutor {
 public:
-    InsertExecutor(Catalog *catalog,
-                   BufferPoolManager *bpm,
-                   InsertStatement stmt)
-        : catalog_(catalog), bpm_(bpm), stmt_(std::move(stmt)) {}
+    InsertExecutor(Catalog *catalog, InsertStatement stmt)
+        : catalog_(catalog), stmt_(std::move(stmt)) {}
 
     // Executes the insert; returns true if OK, false on basic failure.
+    // On failure the heap and index may disagree: the caller's transaction
+    // must roll back.
     bool Execute();
 
 private:
     Catalog *catalog_;
-    BufferPoolManager *bpm_;
     InsertStatement stmt_;
 };

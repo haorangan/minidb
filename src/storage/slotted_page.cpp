@@ -20,6 +20,12 @@ uint16_t &SlottedPage::FreeSpaceEndRef() const {
     return *reinterpret_cast<uint16_t *>(data + 2);
 }
 
+// next_page_id is stored at offset 4..7
+page_id_t &SlottedPage::NextPageRef() const {
+    auto *data = const_cast<char *>(page_->GetData());
+    return *reinterpret_cast<page_id_t *>(data + 4);
+}
+
 // Slot directory occupies [HEADER_SIZE .. HEADER_SIZE + NumSlots()*sizeof(Slot))
 uint16_t SlottedPage::FreeSpaceOffsetInternal() const {
     return static_cast<uint16_t>(HEADER_SIZE + NumSlots() * SLOT_SIZE);
@@ -44,6 +50,15 @@ void SlottedPage::Init() {
     // Initialize header
     NumSlots() = 0;
     FreeSpaceEndRef() = PAGE_SIZE;  // tuple data starts at the very end (no tuples yet)
+    NextPageRef() = -1;
+}
+
+page_id_t SlottedPage::GetNextPageId() const {
+    return NextPageRef();
+}
+
+void SlottedPage::SetNextPageId(page_id_t next) {
+    NextPageRef() = next;
 }
 
 // Free space is the gap between end of slot directory and FreeSpaceEnd

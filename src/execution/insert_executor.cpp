@@ -4,6 +4,8 @@
 
 
 #include "execution/insert_executor.hpp"
+#include "common/crash_point.hpp"
+#include <cstdint>
 #include <iostream>
 
 bool InsertExecutor::Execute() {
@@ -31,6 +33,10 @@ bool InsertExecutor::Execute() {
     // Encode values as int32_t array (for now all columns are INT)
     std::vector<int32_t> vals(stmt_.values.size());
     for (size_t i = 0; i < stmt_.values.size(); ++i) {
+        if (stmt_.values[i] < INT32_MIN || stmt_.values[i] > INT32_MAX) {
+            std::cerr << "InsertExecutor: value out of INT range: " << stmt_.values[i] << "\n";
+            return false;
+        }
         vals[i] = static_cast<int32_t>(stmt_.values[i]);
     }
 
@@ -43,8 +49,10 @@ bool InsertExecutor::Execute() {
         return false;
     }
 
-    // Update index on first column (if exists), e.g. index on column 0
-    // Here we assume the index is registered on the first column name.
+    // The row is in the heap but not yet the index
+    CRASH_POINT("insert.after_heap");
+
+    // Update the index on the first column
     if (schema->GetColumnCount() > 0) {
         const std::string &first_col_name = schema->GetColumn(0).name;
         BPlusTreeIndex *idx = catalog_->GetIndex(stmt_.table_name, first_col_name);
@@ -53,7 +61,7 @@ bool InsertExecutor::Execute() {
             bool idx_ok = idx->Insert(key, rid);
             if (!idx_ok) {
                 std::cerr << "InsertExecutor: index insert failed\n";
-                // Not rolling back in this simple version
+                return false;
             }
         }
     }

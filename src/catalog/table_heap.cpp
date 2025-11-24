@@ -5,6 +5,7 @@
 #include "catalog/table_heap.hpp"
 
 #include <stdexcept>
+#include <unordered_set>
 
 TableHeap *TableHeap::Create(BufferPoolManager *bpm) {
     if (bpm == nullptr) {
@@ -33,6 +34,25 @@ TableHeap *TableHeap::Create(BufferPoolManager *bpm) {
     return new TableHeap(bpm, pages);
 }
 
+TableHeap *TableHeap::Open(BufferPoolManager *bpm, page_id_t first_page_id) {
+    std::vector<page_id_t> pages;
+    std::unordered_set<page_id_t> seen;
+    for (page_id_t pid = first_page_id; pid != -1;) {
+        if (!seen.insert(pid).second) {
+            throw std::runtime_error("TableHeap::Open: corrupt page chain (cycle)");
+        }
+        Page *page = bpm->FetchPage(pid);
+        if (page == nullptr) {
+            throw std::runtime_error("TableHeap::Open: failed to fetch page");
+        }
+        pages.push_back(pid);
+        page_id_t next = SlottedPage(page).GetNextPageId();
+        bpm->UnpinPage(pid, /*is_dirty=*/false);
+        pid = next;
+    }
+    return new TableHeap(bpm, pages);
+}
+
 TableHeap::TableHeap(BufferPoolManager *bpm, const std::vector<page_id_t> &pages)
     : bpm_(bpm), pages_(pages) {}
 
@@ -42,6 +62,9 @@ bool TableHeap::InsertTuple(const char *data, uint16_t size, RID &rid) {
     }
     if (pages_.empty()) {
         return false;  // should not happen if created via Create()
+    }
+    if (size > SlottedPage::MAX_TUPLE_SIZE) {
+        return false;  // would not fit even on an empty page
     }
 
     // Try to insert into the last page
@@ -60,15 +83,15 @@ bool TableHeap::InsertTuple(const char *data, uint16_t size, RID &rid) {
         }
     }
 
-    // No space in last page → unpin it (no change made)
-    bpm_->UnpinPage(last_pid, /*is_dirty=*/false);
-
-    // Allocate a new page
+    // Allocate a new page while the last page is still pinned, so we can link it
     page_id_t new_pid;
     Page *new_page = bpm_->NewPage(new_pid);
     if (new_page == nullptr) {
+        bpm_->UnpinPage(last_pid, /*is_dirty=*/false);
         return false;
     }
+    SlottedPage(page).SetNextPageId(new_pid);
+    bpm_->UnpinPage(last_pid, /*is_dirty=*/true);
 
     // Initialize as an empty slotted page
     {

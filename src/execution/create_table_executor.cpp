@@ -19,8 +19,8 @@ TypeId CreateTableExecutor::ParseType(const std::string &type_name) {
 }
 
 bool CreateTableExecutor::Execute() {
-    if (!catalog_ || !bpm_) {
-        std::cerr << "CreateTableExecutor: missing catalog or bpm\n";
+    if (!catalog_) {
+        std::cerr << "CreateTableExecutor: missing catalog\n";
         return false;
     }
 
@@ -43,7 +43,7 @@ bool CreateTableExecutor::Execute() {
 
     Schema schema(std::move(cols));
     try {
-        catalog_->CreateTable(stmt_.table_name, schema, bpm_);
+        catalog_->CreateTable(stmt_.table_name, schema);
     } catch (const std::exception &e) {
         std::cerr << "CreateTableExecutor: " << e.what() << "\n";
         return false;

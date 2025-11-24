@@ -15,7 +15,9 @@ public:
     // Create a brand-new empty table (allocates first page)
     static TableHeap *Create(BufferPoolManager *bpm);
 
-    // For now, we’ll mostly use Create(); this ctor is for future “open existing” use.
+    // Open an existing table by walking its page chain from the first page
+    static TableHeap *Open(BufferPoolManager *bpm, page_id_t first_page_id);
+
     TableHeap(BufferPoolManager *bpm, const std::vector<page_id_t> &pages);
 
     // Insert raw tuple bytes; returns false if it somehow can’t insert
@@ -23,6 +25,7 @@ public:
 
     // Simple full scan: expose list of page_ids so an iterator can scan them
     const std::vector<page_id_t> &GetPages() const { return pages_; }
+    page_id_t GetFirstPageId() const { return pages_.front(); }
 
 private:
     BufferPoolManager *bpm_;
